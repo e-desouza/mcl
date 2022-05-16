@@ -91,7 +91,7 @@ int mclBn_getCurveType()
 
 int mclBn_getOpUnitSize()
 {
-	return (int)Fp::getUnitSize() * sizeof(mcl::fp::Unit) / sizeof(uint64_t);
+	return (int)Fp::getUnitSize() * sizeof(mcl::Unit) / sizeof(uint64_t);
 }
 
 int mclBn_getG1ByteSize()
@@ -136,6 +136,16 @@ int mclBn_setMapToMode(int mode)
 	return setMapToMode(mode) ? 0 : -1;
 }
 
+int mclBnG1_setDst(const char *dst, mclSize dstSize)
+{
+	return setDstG1(dst, dstSize) ? 0 : -1;
+}
+
+int mclBnG2_setDst(const char *dst, mclSize dstSize)
+{
+	return setDstG2(dst, dstSize) ? 0 : -1;
+}
+
 ////////////////////////////////////////////////
 // set zero
 void mclBnFr_clear(mclBnFr *x)
@@ -159,24 +169,24 @@ int mclBnFr_setStr(mclBnFr *x, const char *buf, mclSize bufSize, int ioMode)
 }
 int mclBnFr_setLittleEndian(mclBnFr *x, const void *buf, mclSize bufSize)
 {
-	cast(x)->setArrayMask((const char *)buf, bufSize);
+	cast(x)->setArrayMask((const uint8_t *)buf, bufSize);
 	return 0;
 }
 int mclBnFr_setBigEndianMod(mclBnFr *x, const void *buf, mclSize bufSize)
 {
 	bool b;
-	cast(x)->setBigEndianMod(&b, buf, bufSize);
+	cast(x)->setBigEndianMod(&b, (const uint8_t*)buf, bufSize);
 	return b ? 0 : -1;
 }
 
 mclSize mclBnFr_getLittleEndian(void *buf, mclSize maxBufSize, const mclBnFr *x)
 {
-	return cast(x)->getLittleEndian(buf, maxBufSize);
+	return cast(x)->getLittleEndian((uint8_t*)buf, maxBufSize);
 }
 int mclBnFr_setLittleEndianMod(mclBnFr *x, const void *buf, mclSize bufSize)
 {
 	bool b;
-	cast(x)->setArray(&b, (const char *)buf, bufSize, mcl::fp::Mod);
+	cast(x)->setArrayMod(&b, (const uint8_t *)buf, bufSize);
 	return b ? 0 : -1;
 }
 mclSize mclBnFr_deserialize(mclBnFr *x, const void *buf, mclSize bufSize)
@@ -383,6 +393,11 @@ int mclBnG1_hashAndMapTo(mclBnG1 *x, const void *buf, mclSize bufSize)
 	hashAndMapToG1(*cast(x), buf, bufSize);
 	return 0;
 }
+int mclBnG1_hashAndMapToWithDst(mclBnG1 *x, const void *buf, mclSize bufSize, const char *dst, mclSize dstSize)
+{
+	hashAndMapToG1(*cast(x), buf, bufSize, dst, dstSize);
+	return 0;
+}
 
 mclSize mclBnG1_getStr(char *buf, mclSize maxBufSize, const mclBnG1 *x, int ioMode)
 {
@@ -460,6 +475,11 @@ int mclBnG2_isValidOrder(const mclBnG2 *x)
 int mclBnG2_hashAndMapTo(mclBnG2 *x, const void *buf, mclSize bufSize)
 {
 	hashAndMapToG2(*cast(x), buf, bufSize);
+	return 0;
+}
+int mclBnG2_hashAndMapToWithDst(mclBnG2 *x, const void *buf, mclSize bufSize, const char *dst, mclSize dstSize)
+{
+	hashAndMapToG2(*cast(x), buf, bufSize, dst, dstSize);
 	return 0;
 }
 
@@ -594,11 +614,11 @@ void mclBnGT_powGeneric(mclBnGT *z, const mclBnGT *x, const mclBnFr *y)
 	Fp12::powGeneric(*cast(z), *cast(x), *cast(y));
 }
 
-void mclBnG1_mulVec(mclBnG1 *z, const mclBnG1 *x, const mclBnFr *y, mclSize n)
+void mclBnG1_mulVec(mclBnG1 *z, mclBnG1 *x, const mclBnFr *y, mclSize n)
 {
 	G1::mulVec(*cast(z), cast(x), cast(y), n);
 }
-void mclBnG2_mulVec(mclBnG2 *z, const mclBnG2 *x, const mclBnFr *y, mclSize n)
+void mclBnG2_mulVec(mclBnG2 *z, mclBnG2 *x, const mclBnFr *y, mclSize n)
 {
 	G2::mulVec(*cast(z), cast(x), cast(y), n);
 }
@@ -622,6 +642,18 @@ void mclBn_millerLoop(mclBnGT *z, const mclBnG1 *x, const mclBnG2 *y)
 void mclBn_millerLoopVec(mclBnGT *z, const mclBnG1 *x, const mclBnG2 *y, mclSize n)
 {
 	millerLoopVec(*cast(z), cast(x), cast(y), n);
+}
+void mclBn_millerLoopVecMT(mclBnGT *z, const mclBnG1 *x, const mclBnG2 *y, mclSize n, mclSize cpuN)
+{
+	millerLoopVecMT(*cast(z), cast(x), cast(y), n, cpuN);
+}
+void mclBnG1_mulVecMT(mclBnG1 *z, mclBnG1 *x, const mclBnFr *y, mclSize n, mclSize cpuN)
+{
+	G1::mulVecMT(*cast(z), cast(x), cast(y), n, cpuN);
+}
+void mclBnG2_mulVecMT(mclBnG2 *z, mclBnG2 *x, const mclBnFr *y, mclSize n, mclSize cpuN)
+{
+	G2::mulVecMT(*cast(z), cast(x), cast(y), n, cpuN);
 }
 int mclBn_getUint64NumToPrecompute(void)
 {
@@ -729,27 +761,27 @@ void mclBnFp_clear(mclBnFp *x)
 
 int mclBnFp_setLittleEndian(mclBnFp *x, const void *buf, mclSize bufSize)
 {
-	cast(x)->setArrayMask((const char *)buf, bufSize);
+	cast(x)->setArrayMask((const uint8_t *)buf, bufSize);
 	return 0;
 }
 
 int mclBnFp_setLittleEndianMod(mclBnFp *x, const void *buf, mclSize bufSize)
 {
 	bool b;
-	cast(x)->setLittleEndianMod(&b, buf, bufSize);
+	cast(x)->setLittleEndianMod(&b, (const uint8_t*)buf, bufSize);
 	return b ? 0 : -1;
 }
 
 int mclBnFp_setBigEndianMod(mclBnFp *x, const void *buf, mclSize bufSize)
 {
 	bool b;
-	cast(x)->setBigEndianMod(&b, buf, bufSize);
+	cast(x)->setBigEndianMod(&b, (const uint8_t*)buf, bufSize);
 	return b ? 0 : -1;
 }
 
 mclSize mclBnFp_getLittleEndian(void *buf, mclSize maxBufSize, const mclBnFp *x)
 {
-	return cast(x)->getLittleEndian(buf, maxBufSize);
+	return cast(x)->getLittleEndian((uint8_t*)buf, maxBufSize);
 }
 int mclBnFp_isValid(const mclBnFp *x)
 {

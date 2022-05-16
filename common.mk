@@ -68,6 +68,10 @@ endif
 ifeq ($(findstring $(OS),mac/mac-m1/mingw64/openbsd),)
   LDFLAGS+=-lrt
 endif
+ifeq ($(ARCH),s390x)
+  CPU=systemz
+  BIT=64
+endif
 
 CP=cp -f
 AR=ar r
@@ -142,6 +146,16 @@ ifeq ($(MCL_STATIC_CODE),1)
   MCL_USE_XBYAK=0
   MCL_MAX_BIT_SIZE=384
   CFLAGS+=-DMCL_STATIC_CODE
+endif
+ifeq ($(MCL_USE_OMP),1)
+  CFLAGS+=-DMCL_USE_OMP
+  ifeq ($(OS),mac)
+    CFLAGS+=-Xpreprocessor -fopenmp
+    LDFLAGS+=-lomp
+  else
+    CFLAGS+=-fopenmp
+    LDFLAGS+=-fopenmp
+  endif
 endif
 LDFLAGS+=$(GMP_LIB) $(OPENSSL_LIB) $(BIT_OPT) $(LDFLAGS_USER)
 

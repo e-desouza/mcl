@@ -15,6 +15,9 @@
 #include <cybozu/exception.hpp>
 #endif
 #include <mcl/randgen.hpp>
+#include <mcl/config.hpp>
+#include <mcl/conversion.hpp>
+
 #ifdef _MSC_VER
 	#pragma warning(push)
 	#pragma warning(disable : 4616)
@@ -27,9 +30,6 @@
 #if defined(__EMSCRIPTEN__) || defined(__wasm__)
 	#define MCL_USE_VINT
 #endif
-#ifndef MCL_MAX_BIT_SIZE
-	#define MCL_MAX_BIT_SIZE 512
-#endif
 #ifdef MCL_USE_VINT
 #include <mcl/vint.hpp>
 typedef mcl::Vint mpz_class;
@@ -41,26 +41,7 @@ typedef mcl::Vint mpz_class;
 #endif
 #endif
 
-#ifndef MCL_SIZEOF_UNIT
-	#if defined(CYBOZU_OS_BIT) && (CYBOZU_OS_BIT == 32)
-		#define MCL_SIZEOF_UNIT 4
-	#else
-		#define MCL_SIZEOF_UNIT 8
-	#endif
-#endif
-
 namespace mcl {
-
-namespace fp {
-
-#if MCL_SIZEOF_UNIT == 8
-typedef uint64_t Unit;
-#else
-typedef uint32_t Unit;
-#endif
-#define MCL_UNIT_BIT_SIZE (MCL_SIZEOF_UNIT * 8)
-
-} // mcl::fp
 
 namespace gmp {
 
@@ -82,24 +63,20 @@ void setArray(bool *pb, mpz_class& z, const T *buf, size_t n)
 	buf[0, size) = x
 	buf[size, maxSize) with zero
 */
-template<class T, class U>
-bool getArray_(T *buf, size_t maxSize, const U *x, int xn)//const mpz_srcptr x)
-{
-	const size_t bufByteSize = sizeof(T) * maxSize;
-	if (xn < 0) return false;
-	size_t xByteSize = sizeof(*x) * xn;
-	if (xByteSize > bufByteSize) return false;
-	memcpy(buf, x, xByteSize);
-	memset((char*)buf + xByteSize, 0, bufByteSize - xByteSize);
-	return true;
-}
 template<class T>
 void getArray(bool *pb, T *buf, size_t maxSize, const mpz_class& x)
 {
 #ifdef MCL_USE_VINT
-	*pb = getArray_(buf, maxSize, x.getUnit(), (int)x.getUnitSize());
+	const Unit *src = x.getUnit();
+	const size_t n = x.getUnitSize();
+	*pb = fp::convertArrayAsLE(buf, maxSize, src, n);
 #else
-	*pb = getArray_(buf, maxSize, x.get_mpz_t()->_mp_d, x.get_mpz_t()->_mp_size);
+	int n = x.get_mpz_t()->_mp_size;
+	if (n < 0) {
+		*pb = false;
+		return;
+	}
+	*pb = fp::convertArrayAsLE(buf, maxSize, x.get_mpz_t()->_mp_d, n);
 #endif
 }
 inline void set(mpz_class& z, uint64_t x)
@@ -415,15 +392,15 @@ inline void setBit(mpz_class& x, size_t pos, bool v = true)
 	}
 #endif
 }
-inline const fp::Unit *getUnit(const mpz_class& x)
+inline const Unit *getUnit(const mpz_class& x)
 {
 #ifdef MCL_USE_VINT
 	return x.getUnit();
 #else
-	return reinterpret_cast<const fp::Unit*>(x.get_mpz_t()->_mp_d);
+	return reinterpret_cast<const Unit*>(x.get_mpz_t()->_mp_d);
 #endif
 }
-inline fp::Unit getUnit(const mpz_class& x, size_t i)
+inline Unit getUnit(const mpz_class& x, size_t i)
 {
 	return getUnit(x)[i];
 }
@@ -506,6 +483,7 @@ inline void getRandPrime(bool *pb, mpz_class& z, size_t bitSize, fp::RandGen rg 
 	for (;;) {
 		getRand(pb, z, bitSize, rg);
 		if (!*pb) return;
+		z |= 1; // odd
 		if (setSecondBit) {
 			z |= mpz_class(1) << (bitSize - 2);
 		}
@@ -946,7 +924,6 @@ public:
 	x mod p for a small value x < (pMulTblN * p).
 */
 struct SmallModp {
-	typedef mcl::fp::Unit Unit;
 	static const size_t unitBitSize = sizeof(Unit) * 8;
 	static const size_t maxTblSize = (MCL_MAX_BIT_SIZE + unitBitSize - 1) / unitBitSize + 1;
 	static const size_t maxMulN = 9;
@@ -983,6 +960,7 @@ struct SmallModp {
 	}
 	uint32_t getTop(const Unit *x) const
 	{
+		if (shiftR_ == 0) return x[N_ - 1];
 		return (x[N_ - 1] >> shiftR_) | (x[N_] << shiftL_);
 	}
 	uint32_t cvtInt(const mpz_class& x) const
@@ -1027,7 +1005,7 @@ struct SmallModp {
 	mod of GMP is faster than Modp
 */
 struct Modp {
-	static const size_t unitBitSize = sizeof(mcl::fp::Unit) * 8;
+	static const size_t unitBitSize = sizeof(mcl::Unit) * 8;
 	mpz_class p_;
 	mpz_class u_;
 	mpz_class a_;
@@ -1078,6 +1056,10 @@ struct Modp {
 	}
 	void modp(mpz_class& r, const mpz_class& t) const
 	{
+		if (t < p_) {
+			r = t;
+			return;
+		}
 		assert(p_ > 0);
 		const size_t tBitSize = gmp::getBitSize(t);
 		// use gmp::mod if init() fails or t is too large

@@ -26,7 +26,7 @@
 
 namespace mcl {
 
-static const int version = 0x140; /* 0xABC = A.BC */
+static const int version = 0x161; /* 0xABC = A.BC */
 
 /*
 	specifies available string format mode for X::setIoMode()
@@ -115,11 +115,6 @@ inline bool isIoSerializeMode(int ioMode)
 	return ioMode & (IoArray | IoArrayRaw | IoSerialize | IoEcAffineSerialize | IoSerializeHexStr);
 }
 
-const size_t UnitBitSize = sizeof(Unit) * 8;
-
-const size_t maxUnitSize = (MCL_MAX_BIT_SIZE + UnitBitSize - 1) / UnitBitSize;
-#define MCL_MAX_UNIT_SIZE ((MCL_MAX_BIT_SIZE + MCL_UNIT_BIT_SIZE - 1) / MCL_UNIT_BIT_SIZE)
-
 const size_t maxMulVecN = 32; // inner loop of mulVec
 
 #ifndef MCL_MAX_MUL_VEC_NGLV
@@ -171,13 +166,6 @@ enum PrimeMode {
 	PM_NIST_P192,
 	PM_SECP256K1,
 	PM_NIST_P521
-};
-
-enum MaskMode {
-	NoMask = 0, // throw if greater or equal
-	SmallMask = 1, // 1-bit smaller mask if greater or equal
-	MaskAndMod = 2, // mask and substract if greater or equal
-	Mod = 3 // mod p
 };
 
 struct Op {
@@ -265,7 +253,6 @@ struct Op {
 	*/
 	int xi_a; // xi = xi_a + u
 	void4u fp2_mulNF;
-	void2u fp2_inv;
 	void2u fp2_mul_xiA_;
 	uint32_t (*hash)(void *out, uint32_t maxOutSize, const void *msg, uint32_t msgSize);
 
@@ -352,7 +339,6 @@ struct Op {
 
 		xi_a = 0;
 		fp2_mulNF = 0;
-		fp2_inv = 0;
 		fp2_mul_xiA_ = 0;
 		hash = 0;
 

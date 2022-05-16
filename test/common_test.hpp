@@ -15,30 +15,41 @@ void naiveMulVec(G& out, const G *xVec, const Fr *yVec, size_t n)
 }
 
 template<class G>
+void mulVecCopy(G& z, G *x, const Fr *y, size_t n, const G* x0)
+{
+	for (size_t i = 0; i < n; i++) x[i] = x0[i];
+	G::mulVec(z, x, y, n);
+}
+
+template<class G>
 void testMulVec(const G& P)
 {
 	using namespace mcl::bn;
-	const int N = 33;
-	G xVec[N];
-	Fr yVec[N];
+	const int N = 4096;
+	std::vector<G> x0Vec(N);
+	std::vector<G> xVec(N);
+	std::vector<Fr> yVec(N);
 
 	for (size_t i = 0; i < N; i++) {
-		G::mul(xVec[i], P, i + 3);
+		G::mul(x0Vec[i], P, i + 3);
+		xVec[i] = x0Vec[i];
 		yVec[i].setByCSPRNG();
 	}
-	const size_t nTbl[] = { 1, 2, 3, 5, 7, 8, 9, 14, 15, 16, 30, 31, 32, 33 };
+	const size_t nTbl[] = { 1, 2, 3, 15, 16, 17, 32, 64, 128, 256, 512, 1024, 2048, N };
 	for (size_t i = 0; i < CYBOZU_NUM_OF_ARRAY(nTbl); i++) {
 		const size_t n = nTbl[i];
 		G Q1, Q2;
 		CYBOZU_TEST_ASSERT(n <= N);
-		naiveMulVec(Q1, xVec, yVec, n);
-		G::mulVec(Q2, xVec, yVec, n);
+		naiveMulVec(Q1, xVec.data(), yVec.data(), n);
+		G::mulVec(Q2, xVec.data(), yVec.data(), n);
 		CYBOZU_TEST_EQUAL(Q1, Q2);
-#if 0//#ifdef NDEBUG
+		Q2.clear();
+#ifdef NDEBUG
 		printf("n=%zd\n", n);
-		const int C = 400;
-		CYBOZU_BENCH_C("naive ", C, naiveMulVec, Q1, xVec, yVec, n);
-		CYBOZU_BENCH_C("mulVec", C, G::mulVec, Q1, xVec, yVec, n);
+		const int C = 10;
+		CYBOZU_BENCH_C("naive ", C, naiveMulVec, Q1, xVec.data(), yVec.data(), n);
+		CYBOZU_BENCH_C("mulVec", C, G::mulVec, Q1, xVec.data(), yVec.data(), n);
+		CYBOZU_BENCH_C("mulVecCopy", C, mulVecCopy, Q1, xVec.data(), yVec.data(), n, x0Vec.data());
 #endif
 	}
 }
@@ -163,10 +174,11 @@ void testABCD()
 
 void testFp2Dbl_mul_xi1()
 {
-	if (Fp2::get_xi_a() != 1) return;
+	const uint32_t xi_a = Fp2::get_xi_a();
+	if (xi_a != 1) return;
 	puts("testFp2Dbl_mul_xi1");
 	cybozu::XorShift rg;
-	for (int i = 0; i < 100; i++) {
+	for (int i = 0; i < 10; i++) {
 		Fp a1, a2;
 		a1.setByCSPRNG(rg);
 		a2.setByCSPRNG(rg);
@@ -176,7 +188,12 @@ void testFp2Dbl_mul_xi1()
 		a2.setByCSPRNG(rg);
 		FpDbl::mulPre(x.b, a1, a2);
 		Fp2Dbl ok;
-		Fp2Dbl::mul_xi_1C(ok, x);
+		{
+			FpDbl::mulUnit(ok.a, x.a, xi_a);
+			ok.a -= x.b;
+			FpDbl::mulUnit(ok.b, x.b, xi_a);
+			ok.b += x.a;
+		}
 		Fp2Dbl::mul_xi(x, x);
 		CYBOZU_TEST_EQUAL_ARRAY(ok.a.getUnit(), x.a.getUnit(), ok.a.getUnitSize());
 		CYBOZU_TEST_EQUAL_ARRAY(ok.b.getUnit(), x.b.getUnit(), ok.b.getUnitSize());

@@ -24,6 +24,10 @@ void mulByCofactorBLS12fast(T& Q, const T& P);
 #include <vector>
 #endif
 
+#ifdef MCL_USE_OMP
+#include <omp.h>
+#endif
+
 /*
 	set bit size of Fp and Fr
 */
@@ -279,7 +283,6 @@ public:
 	}
 };
 
-
 struct MapTo {
 	enum {
 		BNtype,
@@ -289,18 +292,17 @@ struct MapTo {
 	Fp c1_; // sqrt(-3)
 	Fp c2_; // (-1 + sqrt(-3)) / 2
 	mpz_class z_;
+	mpz_class z2_;
 	mpz_class cofactor_;
 	mpz_class g2cofactor_;
 	Fr g2cofactorAdj_;
 	Fr g2cofactorAdjInv_;
 	int type_;
 	int mapToMode_;
-	bool useOriginalG2cofactor_;
 	MapTo_WB19<Fp, G1, Fp2, G2> mapTo_WB19_;
 	MapTo()
 		: type_(0)
 		, mapToMode_(MCL_MAP_TO_MODE_ORIGINAL)
-		, useOriginalG2cofactor_(false)
 	{
 	}
 
@@ -399,25 +401,6 @@ struct MapTo {
 #endif
 	}
 	/*
-		1.2~1.4 times faster than calBN
-	*/
-	template<class G, class F>
-	void naiveMapTo(G& P, const F& t) const
-	{
-		F x = t;
-		for (;;) {
-			F y;
-			G::getWeierstrass(y, x);
-			if (F::squareRoot(y, y)) {
-				bool b;
-				P.set(&b, x, y, false);
-				assert(b);
-				return;
-			}
-			*x.getFp0() += Fp::one();
-		}
-	}
-	/*
 		#(Fp) / r = (z + 1 - t) / r = (z - 1)^2 / 3
 	*/
 	void mulByCofactorBLS12(G1& Q, const G1& P) const
@@ -442,13 +425,9 @@ struct MapTo {
 		Frobenius2(T1, T1);
 		G2::add(Q, T0, T1);
 	}
-	void mulByCofactorBLS12(G2& Q, const G2& P, bool fast = false) const
+	void mulByCofactorBLS12(G2& Q, const G2& P) const
 	{
 		mulByCofactorBLS12fast(Q, P);
-		if (useOriginalG2cofactor_ && !fast) {
-			Q *= g2cofactorAdj_;
-			return;
-		}
 	}
 	/*
 		cofactor_ is for G2(not used now)
@@ -471,9 +450,29 @@ struct MapTo {
 		(void)b;
 		c2_ = (c1_ - 1) / 2;
 	}
-	void initBLS12(const mpz_class& z)
+	void initBLS12(const mpz_class& z, int curveType)
 	{
 		z_ = z;
+		if (curveType == MCL_BLS12_381) {
+			const char *z2 = "396c8c005555e1560000000055555555";
+			const char *cofactor = "396c8c005555e1568c00aaab0000aaab";
+			const char *g2cofactor = "5d543a95414e7f1091d50792876a202cd91de4547085abaa68a205b2e5a7ddfa628f1cb4d9e82ef21537e293a6691ae1616ec6e786f0c70cf1c38e31c7238e5";
+			const char *c1 = "be32ce5fbeed9ca374d38c0ed41eefd5bb675277cdf12d11bc2fb026c41400045c03fffffffdfffd";
+			const char *c2 = "5f19672fdf76ce51ba69c6076a0f77eaddb3a93be6f89688de17d813620a00022e01fffffffefffe";
+			const char *g2cofactorAdjInv = "204d0ec030004ec0600000002fffffffd";
+			const char *g2cofactorAdj = "26a48d1bb889d46d66689d580335f2ac37d2aaab55543d5455555554aaaaaaab";
+			bool b;
+			gmp::setStr(&b, z2_, z2, 16); assert(b); (void)b;
+			gmp::setStr(&b, cofactor_, cofactor, 16); assert(b); (void)b;
+			gmp::setStr(&b, g2cofactor_, g2cofactor, 16); assert(b); (void)b;
+			c1_.setStr(&b, c1, 16); assert(b); (void)b;
+			c2_.setStr(&b, c2, 16); assert(b); (void)b;
+			g2cofactorAdjInv_.setStr(&b, g2cofactorAdjInv, 16); assert(b); (void)b;
+			g2cofactorAdj_.setStr(&b, g2cofactorAdj, 16); assert(b); (void)b;
+			mapTo_WB19_.init();
+			return;
+		}
+		z2_ = (z_ * z_ - 1) / 3;
 		// cofactor for G1
 		cofactor_ = (z - 1) * (z - 1) / 3;
 		const int g2Coff[] = { 13, -4, -4, 6, -4, 0, 5, -4, 1 };
@@ -487,7 +486,6 @@ struct MapTo {
 		assert(b);
 		(void)b;
 		Fr::inv(g2cofactorAdj_, g2cofactorAdjInv_);
-		mapTo_WB19_.init();
 	}
 	/*
 		change mapTo function to mode
@@ -501,14 +499,10 @@ struct MapTo {
 		switch (mode) {
 		case MCL_MAP_TO_MODE_ORIGINAL:
 		case MCL_MAP_TO_MODE_TRY_AND_INC:
-//		case MCL_MAP_TO_MODE_ETH2:
-			mapToMode_ = mode;
-			return true;
-			break;
 		case MCL_MAP_TO_MODE_HASH_TO_CURVE_07:
+		case MCL_MAP_TO_MODE_ETH2_LEGACY:
 			mapToMode_ = mode;
 			return true;
-			break;
 		default:
 			return false;
 		}
@@ -519,7 +513,7 @@ struct MapTo {
 	void init(const mpz_class& cofactor, const mpz_class &z, int curveType)
 	{
 		if (0 <= curveType && curveType < MCL_EC_BEGIN) {
-			type_ = curveType == MCL_BLS12_381 ? BLS12type : BNtype;
+			type_ = (curveType == MCL_BLS12_381 || curveType == MCL_BLS12_377 || curveType == MCL_BLS12_461) ? BLS12type : BNtype;
 		} else {
 			type_ = STD_ECtype;
 		}
@@ -527,14 +521,14 @@ struct MapTo {
 		if (type_ == BNtype) {
 			initBN(cofactor, z, curveType);
 		} else if (type_ == BLS12type) {
-			initBLS12(z);
+			initBLS12(z, curveType);
 		}
 	}
 	template<class G, class F>
 	bool mapToEc(G& P, const F& t) const
 	{
-		if (mapToMode_ == MCL_MAP_TO_MODE_TRY_AND_INC) {
-			naiveMapTo<G, F>(P, t);
+		if (mapToMode_ == MCL_MAP_TO_MODE_TRY_AND_INC || mapToMode_ == MCL_MAP_TO_MODE_ETH2_LEGACY) {
+			ec::tryAndIncMapTo<G>(P, t);
 		} else {
 			if (!calcBN<G, F>(P, t)) return false;
 		}
@@ -552,14 +546,14 @@ struct MapTo {
 		}
 		assert(P.isValid());
 	}
-	void mulByCofactor(G2& P, bool fast = false) const
+	void mulByCofactor(G2& P) const
 	{
 		switch(type_) {
 		case BNtype:
 			mulByCofactorBN(P, P);
 			break;
 		case BLS12type:
-			mulByCofactorBLS12(P, P, fast);
+			mulByCofactorBLS12(P, P);
 			break;
 		}
 		assert(P.isValid());
@@ -574,14 +568,25 @@ struct MapTo {
 		mulByCofactor(P);
 		return true;
 	}
-	bool calc(G2& P, const Fp2& t, bool fast = false) const
+	bool calc(G2& P, const Fp2& t) const
 	{
 		if (mapToMode_ == MCL_MAP_TO_MODE_HASH_TO_CURVE_07) {
 			mapTo_WB19_.Fp2ToG2(P, t);
 			return true;
 		}
 		if (!mapToEc(P, t)) return false;
-		mulByCofactor(P, fast);
+		if (mapToMode_ == MCL_MAP_TO_MODE_ETH2_LEGACY) {
+			Fp2 negY;
+			Fp2::neg(negY, P.y);
+			int cmp = Fp::compare(P.y.b, negY.b);
+			if (!(cmp > 0 || (cmp == 0 && P.y.a > negY.a))) {
+				P.y = negY;
+			}
+		}
+		mulByCofactor(P);
+		if (mapToMode_ == MCL_MAP_TO_MODE_ETH2_LEGACY) {
+			P *= g2cofactorAdj_;
+		}
 		return true;
 	}
 };
@@ -644,7 +649,7 @@ struct GLV1 : mcl::GLV1T<G1, Fr> {
 		(void)b;
 		rw = -(rw + 1) / 2;
 		rBitSize = Fr::getOp().bitSize;
-		rBitSize = (rBitSize + fp::UnitBitSize - 1) & ~(fp::UnitBitSize - 1);// a little better size
+		rBitSize = (rBitSize + UnitBitSize - 1) & ~(UnitBitSize - 1);// a little better size
 		if (isBLS12) {
 			/*
 				BLS12
@@ -681,6 +686,7 @@ struct GLV1 : mcl::GLV1T<G1, Fr> {
 template<class _Fr>
 struct GLV2T {
 	typedef GLV2T<_Fr> GLV2;
+	static const int splitN = 4;
 	typedef _Fr Fr;
 	static size_t rBitSize;
 	static mpz_class B[4][4];
@@ -695,7 +701,7 @@ struct GLV2T {
 		GLV2::abs_z = z < 0 ? -z : z;
 		GLV2::isBLS12 = isBLS12;
 		rBitSize = Fr::getOp().bitSize;
-		rBitSize = (rBitSize + mcl::fp::UnitBitSize - 1) & ~(mcl::fp::UnitBitSize - 1);// a little better size
+		rBitSize = (rBitSize + mcl::UnitBitSize - 1) & ~(mcl::UnitBitSize - 1);// a little better size
 		mpz_class z2p1 = z * 2 + 1;
 		B[0][0] = z + 1;
 		B[0][1] = z;
@@ -744,8 +750,9 @@ struct GLV2T {
 	/*
 		u[] = [x, 0, 0, 0] - v[] * x * B
 	*/
-	static void split(mpz_class u[4], const mpz_class& x)
+	static void split(mpz_class u[4], mpz_class& x)
 	{
+		Fr::getOp().modp.modp(x, x);
 		if (isBLS12) {
 			/*
 				Frob(P) = zP
@@ -779,30 +786,9 @@ struct GLV2T {
 		}
 	}
 	template<class T>
-	static void mul(T& Q, const T& P, const mpz_class& x, bool constTime = false)
-	{
-		if (constTime) {
-			ec::local::mul1CT<GLV2, T, Fr, 4, 4>(Q, P, x);
-		} else {
-			ec::local::mulVecNGLVT<GLV2, T, Fr, 4, 5, 1>(Q, &P, &x, 1);
-		}
-	}
-	template<class T>
 	static void mulLambda(T& Q, const T& P)
 	{
 		Frobenius(Q, P);
-	}
-	template<class T>
-	static size_t mulVecNGLV(T& z, const T *xVec, const mpz_class *yVec, size_t n)
-	{
-		return ec::local::mulVecNGLVT<GLV2, T, Fr, 4, 5, fp::maxMulVecNGLV>(z, xVec, yVec, n);
-	}
-	static void pow(Fp12& z, const Fp12& x, const mpz_class& y, bool constTime = false)
-	{
-		typedef GroupMtoA<Fp12> AG; // as additive group
-		AG& _z = static_cast<AG&>(z);
-		const AG& _x = static_cast<const AG&>(x);
-		mul(_z, _x, y, constTime);
 	}
 };
 
@@ -854,7 +840,7 @@ struct Param {
 	void init(bool *pb, const mcl::CurveParam& cp, fp::Mode mode)
 	{
 		this->cp = cp;
-		isBLS12 = cp.curveType == MCL_BLS12_381;
+		isBLS12 = (cp.curveType == MCL_BLS12_381 || cp.curveType == MCL_BLS12_377 || cp.curveType == MCL_BLS12_461);
 #ifdef MCL_STATIC_CODE
 		if (!isBLS12) {
 			*pb = false;
@@ -952,18 +938,8 @@ struct Param {
 	}
 	void initG1only(bool *pb, const mcl::EcParam& para)
 	{
-		Fp::init(pb, para.p);
-		if (!*pb) return;
-		Fr::init(pb, para.n);
-		if (!*pb) return;
-		G1::init(pb, para.a, para.b);
-		if (!*pb) return;
+		mcl::initCurve<G1, Fr>(pb, para.curveType, &basePoint);
 		mapTo.init(0, 0, para.curveType);
-		Fp x0, y0;
-		x0.setStr(pb, para.gx);
-		if (!*pb) return;
-		y0.setStr(pb, para.gy);
-		basePoint.set(pb, x0, y0);
 	}
 #ifndef CYBOZU_DONT_USE_EXCEPTION
 	void init(const mcl::CurveParam& cp, fp::Mode mode)
@@ -996,36 +972,12 @@ namespace local {
 
 typedef GLV2T<Fr> GLV2;
 
-inline void mulArrayGLV2(G2& z, const G2& x, const mcl::fp::Unit *y, size_t yn, bool isNegative, bool constTime)
-{
-	mpz_class s;
-	bool b;
-	mcl::gmp::setArray(&b, s, y, yn);
-	assert(b);
-	if (isNegative) s = -s;
-	GLV2::mul(z, x, s, constTime);
-}
-inline void powArrayGLV2(Fp12& z, const Fp12& x, const mcl::fp::Unit *y, size_t yn, bool isNegative, bool constTime)
-{
-	mpz_class s;
-	bool b;
-	mcl::gmp::setArray(&b, s, y, yn);
-	assert(b);
-	if (isNegative) s = -s;
-	GLV2::pow(z, x, s, constTime);
-}
-
-inline size_t mulVecNGLV2(G2& z, const G2 *xVec, const mpz_class *yVec, size_t n)
-{
-	return GLV2::mulVecNGLV(z, xVec, yVec, n);
-}
-
-inline size_t powVecNGLV2(Fp12& z, const Fp12 *xVec, const mpz_class *yVec, size_t n)
+inline bool powVecGLV(Fp12& z, const Fp12 *xVec, const void *yVec, size_t n, fp::getMpzAtType getMpzAt, fp::getUnitAtType getUnitAt)
 {
 	typedef GroupMtoA<Fp12> AG; // as additive group
 	AG& _z = static_cast<AG&>(z);
 	const AG *_xVec = static_cast<const AG*>(xVec);
-	return GLV2::mulVecNGLV(_z, _xVec, yVec, n);
+	return mcl::ec::mulVecGLVT<GLV2, AG, Fr>(_z, _xVec, yVec, n, getMpzAt, getUnitAt);
 }
 
 /*
@@ -1616,6 +1568,10 @@ inline void makeAdjP(G1& adjP, const G1& P)
 */
 inline void finalExp(Fp12& y, const Fp12& x)
 {
+	if (x.isZero()) {
+		y.clear();
+		return;
+	}
 #if 1
 	mapToCyclotomic(y, x);
 #else
@@ -2041,6 +1997,46 @@ inline void millerLoopVec(Fp12& f, const G1* Pvec, const G2* Qvec, size_t n, boo
 	}
 }
 
+// multi thread version of millerLoopVec
+// the num of thread is automatically detected if cpuN = 0
+inline void millerLoopVecMT(Fp12& f, const G1* Pvec, const G2* Qvec, size_t n, size_t cpuN = 0)
+{
+	if (n == 0) {
+		f = 1;
+		return;
+	}
+#ifdef MCL_USE_OMP
+	const size_t minN = 16;
+	if (cpuN == 0) {
+		cpuN = omp_get_num_procs();
+		if (n < minN * cpuN) {
+			cpuN = (n + minN - 1) / minN;
+		}
+	}
+	if (cpuN <= 1 || n <= cpuN) {
+		millerLoopVec(f, Pvec, Qvec, n);
+		return;
+	}
+	Fp12 *fs = (Fp12*)CYBOZU_ALLOCA(sizeof(Fp12) * cpuN);
+	size_t q = n / cpuN;
+	size_t r = n % cpuN;
+	#pragma omp parallel for
+	for (size_t i = 0; i < cpuN; i++) {
+		size_t adj = q * i + fp::min_(i, r);
+		millerLoopVec(fs[i], Pvec + adj, Qvec + adj, q + (i < r));
+	}
+	f = 1;
+//	#pragma omp declare reduction(red:Fp12:omp_out *= omp_in) initializer(omp_priv = omp_orig)
+//	#pragma omp parallel for reduction(red:f)
+	for (size_t i = 0; i < cpuN; i++) {
+		f *= fs[i];
+	}
+#else
+	(void)cpuN;
+	millerLoopVec(f, Pvec, Qvec, n);
+#endif
+}
+
 inline bool setMapToMode(int mode)
 {
 	return BN::nonConstParam.mapTo.setMapToMode(mode);
@@ -2050,7 +2046,7 @@ inline int getMapToMode()
 	return BN::param.mapTo.mapToMode_;
 }
 inline void mapToG1(bool *pb, G1& P, const Fp& x) { *pb = BN::param.mapTo.calc(P, x); }
-inline void mapToG2(bool *pb, G2& P, const Fp2& x, bool fast = false) { *pb = BN::param.mapTo.calc(P, x, fast); }
+inline void mapToG2(bool *pb, G2& P, const Fp2& x) { *pb = BN::param.mapTo.calc(P, x); }
 #ifndef CYBOZU_DONT_USE_EXCEPTION
 inline void mapToG1(G1& P, const Fp& x)
 {
@@ -2058,10 +2054,10 @@ inline void mapToG1(G1& P, const Fp& x)
 	mapToG1(&b, P, x);
 	if (!b) throw cybozu::Exception("mapToG1:bad value") << x;
 }
-inline void mapToG2(G2& P, const Fp2& x, bool fast = false)
+inline void mapToG2(G2& P, const Fp2& x)
 {
 	bool b;
-	mapToG2(&b, P, x, fast);
+	mapToG2(&b, P, x);
 	if (!b) throw cybozu::Exception("mapToG2:bad value") << x;
 }
 #endif
@@ -2096,6 +2092,26 @@ inline void hashAndMapToG2(G2& P, const void *buf, size_t bufSize)
 	assert(b);
 	(void)b;
 }
+inline void hashAndMapToG1(G1& P, const void *buf, size_t bufSize, const char *dst, size_t dstSize)
+{
+	BN::param.mapTo.mapTo_WB19_.msgToG1(P, buf, bufSize, dst, dstSize);
+}
+inline void hashAndMapToG2(G2& P, const void *buf, size_t bufSize, const char *dst, size_t dstSize)
+{
+	BN::param.mapTo.mapTo_WB19_.msgToG2(P, buf, bufSize, dst, dstSize);
+}
+// set the default dst for G1
+// return 0 if success else -1
+inline bool setDstG1(const char *dst, size_t dstSize)
+{
+	return BN::nonConstParam.mapTo.mapTo_WB19_.dstG1.set(dst, dstSize);
+}
+// set the default dst for G2
+// return 0 if success else -1
+inline bool setDstG2(const char *dst, size_t dstSize)
+{
+	return BN::nonConstParam.mapTo.mapTo_WB19_.dstG2.set(dst, dstSize);
+}
 #ifndef CYBOZU_DONT_USE_STRING
 inline void hashAndMapToG1(G1& P, const std::string& str)
 {
@@ -2115,6 +2131,39 @@ inline void verifyOrderG1(bool doVerify)
 inline void verifyOrderG2(bool doVerify)
 {
 	G2::setOrder(doVerify ? BN::param.r : 0);
+}
+
+/*
+	Faster Subgroup Checks for BLS12-381
+	Sean Bowe, https://eprint.iacr.org/2019/814
+	Frob^2(P) - z Frob^3(P) == P
+*/
+inline bool isValidOrderBLS12(const G2& P)
+{
+	G2 T2, T3;
+	Frobenius2(T2, P);
+	Frobenius(T3, T2);
+	G2::mulGeneric(T3, T3, BN::param.z);
+	T2 -= T3;
+	return T2 == P;
+}
+/*
+	z2 = (z^2-1)/3, c2 = (-1 + sqrt(-3))/2
+	P = (x, y), T1 = (c2 x, y), T0 = (c2^2 x, y)
+	z2(2 T0 - P - T1) == T1
+*/
+inline bool isValidOrderBLS12(const G1& P)
+{
+	G1 T0, T1;
+	T1 = P;
+	T1.x *= BN::param.mapTo.c2_;
+	T0 = T1;
+	T0.x *= BN::param.mapTo.c2_;
+	G1::dbl(T0, T0);
+	T0 -= P;
+	T0 -= T1;
+	G1::mulGeneric(T0, T0, BN::param.mapTo.z2_);
+	return T0 == T1;
 }
 
 // backward compatibility
@@ -2165,13 +2214,17 @@ inline void init(bool *pb, const mcl::CurveParam& cp = mcl::BN254, fp::Mode mode
 {
 	BN::nonConstParam.init(pb, cp, mode);
 	if (!*pb) return;
-	G1::setMulArrayGLV(local::GLV1::mulArrayGLV, local::GLV1::mulVecNGLV);
-	G2::setMulArrayGLV(local::mulArrayGLV2, local::mulVecNGLV2);
-	Fp12::setPowArrayGLV(local::powArrayGLV2, local::powVecNGLV2);
+	G1::setMulVecGLV(mcl::ec::mulVecGLVT<local::GLV1, G1, Fr>);
+	G2::setMulVecGLV(mcl::ec::mulVecGLVT<local::GLV2, G2, Fr>);
+	Fp12::setPowVecGLV(local::powVecGLV);
 	G1::setCompressedExpression();
 	G2::setCompressedExpression();
 	verifyOrderG1(false);
 	verifyOrderG2(false);
+	if (BN::param.isBLS12) {
+		G1::setVerifyOrderFunc(isValidOrderBLS12);
+		G2::setVerifyOrderFunc(isValidOrderBLS12);
+	}
 	*pb = true;
 }
 
@@ -2202,11 +2255,11 @@ inline void initPairing(const mcl::CurveParam& cp = mcl::BN254, fp::Mode mode = 
 
 inline void initG1only(bool *pb, const mcl::EcParam& para)
 {
+	G1::setMulVecGLV(0);
+	G2::setMulVecGLV(0);
+	Fp12::setPowVecGLV(0);
 	BN::nonConstParam.initG1only(pb, para);
 	if (!*pb) return;
-	G1::setMulArrayGLV(0);
-	G2::setMulArrayGLV(0);
-	Fp12::setPowArrayGLV(0);
 	G1::setCompressedExpression();
 	G2::setCompressedExpression();
 }

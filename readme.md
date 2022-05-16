@@ -10,6 +10,17 @@ mcl is a library for pairing-based cryptography,
 which supports the optimal Ate pairing over BN curves and BLS12-381 curves.
 
 # News
+- the performance of `{G1,G2}::mulVec(z, xVec, yVec, n)` has improved for n >= 256. (about 2x speed up for n = 512).
+  - But it changes the type of xVec from `const G*` to `G*` because xVec may be normalized when computing.
+  - fix mul(G, G, F) for F = Fp at v1.61
+- add set DST functions for hashMapToGi
+- add F::invVec, G::normalizeVec
+- improve SECP256K1 for x64
+- add G1::mulVecMT, G2::mulVecMT (enabled by MCL_USE_OMP=1)
+- improve mulMod of SECP256K1 for wasm
+- fix FpToG1(P, u, v) and Fp2ToG2(P, u, v) when u == v (This bug does not affect mapToG1 and mapToG2).
+- add millerLoopVecMT (enabled if built with MCL_USE_OMP=1)
+- support s390x(systemz)
 - improve M1 mac performance
 - set default `MCL_MAX_BIT_SIZE=512` so disable to support `NICT_P521`.
 - improve performance
@@ -29,6 +40,8 @@ which supports the optimal Ate pairing over BN curves and BLS12-381 curves.
 - WebAssembly
 - Android
 - iPhone
+- s390x(systemz)
+  - install llvm and clang, and `make UPDATE_ASM=1` once.
 - (maybe any platform to be supported by LLVM)
 
 # Support curves
@@ -41,7 +54,7 @@ which supports the optimal Ate pairing over BN curves and BLS12-381 curves.
 - BLS12\_381 ; [a BLS12-381 curve](https://blog.z.cash/new-snark-curve/)
 
 # C-API
-see [api.md](api.md)
+see [api.md](api.md) and [FAQ](api.md#faq) for serialization and hash-to-curve.
 
 # How to build on Linux and macOS
 x86-64/ARM/ARM64 Linux, macOS and mingw64 are supported.
@@ -64,6 +77,12 @@ make -j4
 
 - `lib/libmcl.*` ; core library
 - `lib/libmclbn384_256.*` ; library to use C-API of BLS12-381 pairing
+
+## How to make src/bitint_if{32,64}.ll
+clang++-12 is necessary. clang-14 is not supported because it uses _ExtInt.
+```
+make MCL_BITINT=1 LLVM_VER=-12 bin/bitint_if_test.exe -j MCL_USE_GMP=1
+```
 
 ## How to test of BLS12-381 pairing
 
@@ -328,8 +347,35 @@ Y. Sakemi, Y. Nogami, K. Okeya, Y. Morikawa, CANS 2008.
 - break backward compatibility of mapToGi for BLS12. A map-to-function for BN is used.
 If `MCL_USE_OLD_MAPTO_FOR_BLS12` is defined, then the old function is used, but this will be removed in the future.
 
-# History
+# FAQ
 
+## How do I set the hash value to Fr?
+The behavior of `setHashOf` function may be a little different from what you want.
+  - https://github.com/herumi/mcl/blob/master/api.md#hash-and-mapto-functions
+  - https://github.com/herumi/mcl/blob/master/api.md#set-buf0bufsize-1-to-x-with-masking-according-to-the-following-way
+
+Please use the following code:
+```
+template<class F>
+void setHash(F& x, const void *msg, size_t msgSize)
+{
+    uint8_t md[32];
+    mcl::fp::sha256(md, sizeof(md), msg, msgSize);
+    x.setBigEndianMod(md, sizeof(md));
+    // or x.setLittleEndianMod(md, sizeof(md));
+}
+```
+
+
+# History
+- 2022/Apr/10 v1.60 improve {G1,G2}::mulVec
+- 2022/Mar/25 v1.59 add set DST functions for hashMapToGi
+- 2022/Mar/24 add F::invVec, G::normalizeVec
+- 2022/Mar/08 v1.58 improve SECP256K1 for x64
+- 2022/Feb/13 v1.57 add mulVecMT
+- 2021/Aug/26 v1.52 improve {G1,G2}::isValidOrder() for BLS12-381
+- 2021/May/04 v1.50 support s390x(systemz)
+- 2021/Apr/21 v1.41 fix inner function of mapToGi for large dst (not affect hashAndMapToGi)
 - 2021/May/24 v1.40 fix sigsegv in valgrind
 - 2021/Jan/28 v1.31 fix : call setOrder in init for isValidOrder
 - 2021/Jan/28 v1.30 a little optimization of Fp operations

@@ -4,7 +4,9 @@ project(mcl
 	VERSION 1.22
 	LANGUAGES CXX C ASM)
 
-set(CMAKE_BUILD_TYPE "Release")
+if(NOT DEFINED CMAKE_BUILD_TYPE)
+	set(CMAKE_BUILD_TYPE "Release")
+endif()
 
 option(
 	MCL_MAX_BIT_SIZE
@@ -217,8 +219,8 @@ else()
 endif()
 
 if(NOT MCL_USE_GMP)
-	target_compile_definitions(mcl PUBLIC MCL_USE_VINT MCL_VINT_FIXED_BUFFER)
-	target_compile_definitions(mcl_st PUBLIC MCL_USE_VINT MCL_VINT_FIXED_BUFFER)
+	target_compile_definitions(mcl PUBLIC MCL_USE_VINT)
+	target_compile_definitions(mcl_st PUBLIC MCL_USE_VINT)
 endif()
 if(NOT MCL_USE_OPENSSL)
 	target_compile_definitions(mcl PUBLIC MCL_DONT_USE_OPENSSL)
@@ -286,7 +288,7 @@ if(MCL_DOWNLOAD_SOURCE)
 		target_link_libraries(mcl_st PUBLIC mcl::windows_specific)
 	endif()
 else()
-	if(MSVC)
+	if(MSVC AND NOT MCL_NO_MPIR)
 		# mpir
 		add_library(cybozulib_ext::mpir STATIC IMPORTED)
 		set_target_properties(cybozulib_ext::mpir PROPERTIES
@@ -345,11 +347,19 @@ foreach(bit IN ITEMS 256 384 384_256)
 endforeach()
 
 if(MSVC)
-	install(TARGETS mcl mcl_st mclbn256 mclbn384 mclbn384_256 windows_specific
-		EXPORT mclTargets
-		LIBRARY DESTINATION lib
-		ARCHIVE DESTINATION lib
-		RUNTIME DESTINATION lib)
+	if(MCL_NO_MPIR)
+		install(TARGETS mcl mcl_st mclbn256 mclbn384 mclbn384_256
+			EXPORT mclTargets
+			LIBRARY DESTINATION lib
+			ARCHIVE DESTINATION lib
+			RUNTIME DESTINATION lib)
+	else()
+		install(TARGETS mcl mcl_st mclbn256 mclbn384 mclbn384_256 windows_specific
+			EXPORT mclTargets
+			LIBRARY DESTINATION lib
+			ARCHIVE DESTINATION lib
+			RUNTIME DESTINATION lib)
+	endif()
 else()
 	install(TARGETS mcl mcl_st mclbn256 mclbn384 mclbn384_256
 		EXPORT mclTargets

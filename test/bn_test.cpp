@@ -202,7 +202,7 @@ void testFp12pow(const G1& P, const G2& Q)
 	cybozu::XorShift rg;
 	for (int i = -10; i < 10; i++) {
 		mpz_class xm = i;
-		Fp12::pow(e1, e, xm);
+		Fp12::pow(e1, e, i);
 		Fp12::powGeneric(e2, e, xm);
 		CYBOZU_TEST_EQUAL(e1, e2);
 	}
@@ -210,8 +210,8 @@ void testFp12pow(const G1& P, const G2& Q)
 		Fr x;
 		x.setRand(rg);
 		mpz_class xm = x.getMpz();
-		Fp12::pow(e1, e, xm);
-		local::GLV2::pow(e2, e, xm);
+		Fp12::pow(e2, e, x);
+		Fp12::powGeneric(e1, e, xm);
 		CYBOZU_TEST_EQUAL(e1, e2);
 	}
 }
@@ -273,6 +273,33 @@ void testMillerLoopVec()
 		}
 		millerLoopVec(f2, Pvec, Qvec, m);
 		CYBOZU_TEST_EQUAL(f1, f2);
+	}
+}
+
+void testMillerLoopVecMT()
+{
+	const size_t n = 40;
+	G1 Pvec[n];
+	G2 Qvec[n];
+	char c = 'a';
+	for (size_t i = 0; i < n; i++) {
+		hashAndMapToG1(Pvec[i], &c, 1);
+		hashAndMapToG2(Qvec[i], &c, 1);
+		c++;
+	}
+	for (size_t cpuN = 0; cpuN < 5; cpuN++) {
+		for (size_t m = 0; m < n; m++) {
+			Fp12 f1, f2;
+			f1 = 1;
+			f2.clear();
+			for (size_t i = 0; i < m; i++) {
+				Fp12 e;
+				millerLoop(e, Pvec[i], Qvec[i]);
+				f1 *= e;
+			}
+			millerLoopVecMT(f2, Pvec, Qvec, m, cpuN);
+			CYBOZU_TEST_EQUAL(f1, f2);
+		}
 	}
 }
 
@@ -406,6 +433,7 @@ CYBOZU_TEST_AUTO(naive)
 		testPrecomputed(P, Q);
 		testMillerLoop2(P, Q);
 		testMillerLoopVec();
+		testMillerLoopVecMT();
 		testCommon(P, Q);
 		testBench(P, Q);
 		benchAddDblG1();

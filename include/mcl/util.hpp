@@ -17,8 +17,21 @@
 namespace mcl { namespace fp {
 
 // some environments do not have utility
-template<class T>
-T abs_(T x) { return x < 0 ? -x : x; }
+inline uint32_t abs_(int32_t x)
+{
+	if (x >= 0) return uint32_t(x);
+	// avoid undefined behavior
+	if (x == -2147483647 - 1) return 2147483648u;
+	return uint32_t(-x);
+}
+
+inline uint64_t abs_(int64_t x)
+{
+	if (x >= 0) return uint64_t(x);
+	// avoid undefined behavior
+	if (x == -9223372036854775807ll - 1) return 9223372036854775808ull;
+	return uint64_t(-x);
+}
 
 template<class T>
 T min_(T x, T y) { return x < y ? x : y; }
@@ -164,46 +177,75 @@ size_t getNonZeroArraySize(const T *x, size_t n)
 	return 1;
 }
 
+// return T(x[0:xN] >> bitPos) if bitPos < sizeof(T) * xN else 0
+template<class T>
+T getUnitAt(const T *x, size_t xN, size_t bitPos)
+{
+	const size_t TbitSize = sizeof(T) * 8;
+	if (bitPos >= TbitSize * xN) return 0;
+	const size_t q = bitPos / TbitSize;
+	const size_t r = bitPos % TbitSize;
+	if (r == 0) return x[q];
+	if (q == xN - 1) return x[q] >> r;
+	return (x[q] >> r) | (x[q + 1] << (TbitSize - r));
+}
+
 template<class T>
 class BitIterator {
 	const T *x_;
 	size_t bitPos_;
 	size_t bitSize_;
+	size_t w_;
+	T mask_;
 	static const size_t TbitSize = sizeof(T) * 8;
 public:
-	BitIterator(const T *x, size_t n)
-		: x_(x)
-		, bitPos_(0)
+	explicit BitIterator(const T *x = 0, size_t n = 0)
 	{
-		assert(n > 0);
-		n = getNonZeroArraySize(x, n);
-		if (n == 1 && x[0] == 0) {
-			bitSize_ = 1;
-		} else {
-			assert(x_[n - 1]);
-			bitSize_ = (n - 1) * sizeof(T) * 8 + 1 + cybozu::bsr<T>(x_[n - 1]);
-		}
+		init(x, n);
 	}
+	void init(const T *x, size_t n)
+	{
+		x_ = x;
+		bitPos_ = 0;
+		while (n > 0 && (x[n - 1] == 0)) {
+			n--;
+		}
+		if (n == 0) {
+			bitSize_ = 0;
+			return;
+		}
+		bitSize_ = (n - 1) * sizeof(T) * 8 + 1 + cybozu::bsr<T>(x_[n - 1]);
+	}
+	size_t getBitSize() const { return bitSize_; }
 	bool hasNext() const { return bitPos_ < bitSize_; }
 	T getNext(size_t w)
 	{
 		assert(0 < w && w <= TbitSize);
-		assert(hasNext());
+		if (!hasNext()) return 0;
 		const size_t q = bitPos_ / TbitSize;
 		const size_t r = bitPos_ % TbitSize;
 		const size_t remain = bitSize_ - bitPos_;
 		if (w > remain) w = remain;
 		T v = x_[q] >> r;
+#if defined(__GNUC__) && !defined(__EMSCRIPTEN__) && !defined(__clang__)
+	// avoid gcc wrong detection
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 		if (r + w > TbitSize) {
 			v |= x_[q + 1] << (TbitSize - r);
 		}
+#if defined(__GNUC__) && !defined(__EMSCRIPTEN__) && !defined(__clang__)
+	#pragma GCC diagnostic pop
+#endif
 		bitPos_ += w;
 		return v & mask(w);
 	}
 	// whethere next bit is 1 or 0 (bitPos is not moved)
 	bool peekBit() const
 	{
-		assert(hasNext());
+//		assert(hasNext());
+		if (!hasNext()) return 0;
 		const size_t q = bitPos_ / TbitSize;
 		const size_t r = bitPos_ % TbitSize;
 		return (x_[q] >> r) & 1;

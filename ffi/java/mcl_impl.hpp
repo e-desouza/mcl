@@ -9,6 +9,10 @@
 
 void SystemInit(int curveType) throw(std::exception)
 {
+	if (curveType == MCL_SECP256K1) {
+		mcl::initCurve<mcl::bn::G1, mcl::bn::Fr>(curveType);
+		return;
+	}
 	mcl::CurveParam cp;
 	switch (curveType) {
 	case MCL_BN254: cp = mcl::BN254; break;
@@ -31,7 +35,7 @@ void deserializeT(T& x, const char *cbuf, size_t bufSize)
 template<class T>
 void setLittleEndianModT(T& x, const char *cbuf, size_t bufSize)
 {
-	x.setLittleEndianMod(cbuf, bufSize);
+	x.setLittleEndianMod((const uint8_t*)cbuf, bufSize);
 }
 
 template<class T>
@@ -274,6 +278,32 @@ public:
 	{
 		serializeT(out, self_);
 	}
+	void normalize()
+	{
+		self_.normalize();
+	}
+	void tryAndIncMapTo(const Fp& x)
+	{
+		mcl::ec::tryAndIncMapTo(self_, x.self_);
+	}
+	Fp getX() const
+	{
+		Fp ret;
+		ret.self_ = self_.x;
+		return ret;
+	}
+	Fp getY() const
+	{
+		Fp ret;
+		ret.self_ = self_.y;
+		return ret;
+	}
+	Fp getZ() const
+	{
+		Fp ret;
+		ret.self_ = self_.z;
+		return ret;
+	}
 };
 
 void neg(G1& y, const G1& x)
@@ -344,6 +374,10 @@ public:
 	void serialize(std::string& out) const throw(std::exception)
 	{
 		serializeT(out, self_);
+	}
+	void normalize()
+	{
+		self_.normalize();
 	}
 };
 
@@ -429,6 +463,16 @@ void hashAndMapToG1(G1& P, const char *cbuf, size_t bufSize) throw(std::exceptio
 void hashAndMapToG2(G2& P, const char *cbuf, size_t bufSize) throw(std::exception)
 {
 	mcl::bn::hashAndMapToG2(P.self_, cbuf, bufSize);
+}
+
+void verifyOrderG1(bool doVerify)
+{
+    mcl::bn::verifyOrderG1(doVerify);
+}
+
+void verifyOrderG2(bool doVerify)
+{
+    mcl::bn::verifyOrderG2(doVerify);
 }
 
 #if defined(__GNUC__) && !defined(__EMSCRIPTEN__) && !defined(__clang__)
